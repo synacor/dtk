@@ -1,0 +1,89 @@
+#!/usr/bin/perl -w
+use strict;
+
+if (@ARGV && $ARGV[0] =~ /^(?:\-\?|\-h|\-\-help)$/) {
+  print STDERR <<'EOF';
+usage: dtk filter <code>
+
+This tool takes rows of tab-delimited data on STDIN.  For each row, <code> is evaluated, which has access to each individual field of the record via @v, which can be modified in-place.  To drop the current record, use 'next'.  To drop all further records, use 'last'.
+
+This tool PREVIOUSLY used the result of the last expression as an indicator for whether to keep the record; this is NO LONGER the case.
+
+Available helper functions:
+parse_uri
+  Takes a URI (or part of one, like /path/to/thing?a=1&b=2 or
+  file:///path/to/thing.doc) and returns an empty list on failure or a hash
+   containing schema, auth, host, port, path, query, and fragment.
+parse_query
+  Takes a query string (key/value pairs in the application/x-www-form-urlencoded
+  format) and returns a hash containing the key/value pairs.  Keys with no
+  "=value" part will receive the value "1", such that "a&b=2" will
+  return (a=>1, b=>2).
+parse_cookies
+  Takes a cookie string (key/value pairs like "a=1; b=2; c=3") and returns a
+  hash containing the key/value pairs.
+decode_uri
+  Takes a URI-encoded string (containing codes like %2d for "=") and returns
+  the decoded string.
+
+
+Here is a filter which takes a two-column input and returns it plus a column containing the average of the first two columns if the sum is between 1 and 1.1.
+
+perl -e 'print rand()."\t".rand()."\n" for 1..100' |
+  dtk filter 'my $sum = $v[0] + $v[1]; next unless $sum>1 && $sum<1.1; $v[2] = $sum/2;'
+EOF
+  exit;
+}
+
+die "usage: $0 <code>" unless @ARGV == 1;
+
+eval('while(<STDIN>){chomp;my@v=($_ eq "" ? ("") : split(/\t/,$_,-1));do{'.$ARGV[0].'};print join("\t",@v)."\n"}');
+die $@ if $@;
+
+sub parse_uri {
+  my ($uri) = @_;
+  return () unless $uri =~ /^(?:(\w+)\:\/\/(?:(?:([^\@]+)\@)?([^\/\:]+)(?:\:(\w+))?)?)?(\/[^\?\#]*)(?:\?([^\#]*))?(?:\#(.*))?$/;
+  return map { defined() ? $_ : "" } (
+    schema => $1,
+    auth => $2,
+    host => $3,
+    port => $4,
+    path => $5,
+    query => $6,
+    fragment => $7,
+  );
+}
+
+sub decode_uri {
+  my ($v) = @_;
+  $v =~ s/\+/ /g;
+  $v =~ s/%(..)/pack("c",hex($1))/ge;
+  return $v;
+}
+
+sub parse_query {
+  my ($query) = @_;
+  $query =~ s/^\?//;
+  my (%query, $key, $val);
+  foreach my $pair (split(/\&/, $query)) {
+    ($key, $val) = split(/\=/, $pair, 2);
+    $key = decode_uri($key);
+    if (defined $val) {
+      $val = decode_uri($val);
+      $query{$key} = $val;
+    } else {
+      $query{$key} = 1;
+    }
+  }
+  return %query;
+}
+
+sub parse_cookies {
+  my ($cookies) = @_;
+  my (%cookies, $key, $val);
+  foreach my $pair (split(/(?:\;\s*)+/, $cookies)) {
+    ($key, $val) = split(/\=/, $pair, 2);
+    $cookies{$key} = $val;
+  }
+  return %cookies;
+}

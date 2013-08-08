@@ -1,0 +1,89 @@
+#!/usr/bin/perl -w
+use strict;
+
+use Date::Parse;
+
+if (@ARGV && $ARGV[0] =~ /^(?:\-\?|\-h|\-\-help)$/) {
+  print STDERR <<'EOF';
+usage: dtk sort [-mode] <rule> [[-mode] <rule> ...]
+
+This tool takes rows of tab-delimited data on STDIN.  Each row is broken into columns in @v and converted to a sortable key by each <rule>.  The rows are sorted by the keys given by the <rule>s using earlier <rule>s first.  
+
+Each <rule> can be a number (to simply sort by that column), a macro (of the form "<column>:<name>"; see below), or code.  Code <rule>s is executed in the context of a do{} block and should produce a sort key by evaluating it as its last expression.
+
+Modes apply to the subsequent <rule>s until another mode overrides the previous.  They consist of:
+- either 'n' or 's' to switch to a numeric (<=>) or string (cmp) comparison
+- either 'a' or 'd' to switch to ascending or descending sort
+
+Valid macros are:
+  time - convert the given column to a unix timestamp (using Date::Parse) and force -n
+  domain - the given column is split by dots, reversed, and sorted by -s (so "b.com" comes before "a.net")
+  mixed - the given column is broken into alternating groups of digit/nondigit parts and sorted by -n/-s respectively (so "a2z" comes before "a10a")
+
+Here is a sort which takes a three-column input (two numbers and a string) and sorts it by the string (descending) followed by the sum of the two numbers (ascending):
+
+perl -e 'my @str=qw(a b c); print rand()."\t".rand()."\t".$str[rand()*@str]."\n" for 1..30' | dtk sort -sd '$v[2]' -na '$v[0] + $v[1]'
+
+Here is a sort which produces tab-delimited ip/time pairs from an apache access log (selecting 1/20 of the rows), limiting to the first 40 rows, and then sorting by date and, where the dates match, by individual IP octets.
+
+cat access_log | cut -d ']' -f 1 | perl -ne 'unless($.%20){s/ - - \[/\t/;print}' | head -n 40 | dtk sort 1:time 0:mixed
+EOF
+  exit;
+}
+
+die "usage: $0 [-mode] <code> [[-mode] <code> ...]" unless @ARGV >= 1;
+
+my $sorttype = 0; #num, 1=str
+my $sortdir  = 0; #asc, 1=dsc
+my (@sorttype, @sortdir, @sortcode);
+foreach (@ARGV) {
+  if (/^\-(\w+)$/) {
+    my $opt = $1;
+    if ($opt =~ /^(?:(a)|(d)|(n)|(s))+$/) {
+      my ($a, $d, $n, $s) = ($1, $2, $3, $4);
+      die "tried to set numeric and string from a single mode" if $n && $s;
+      die "tried to set asc and desc from a single mode" if $a && $d;
+      $sorttype = 0 if $n;
+      $sorttype = 1 if $s;
+      $sortdir  = 0 if $a;
+      $sortdir  = 1 if $d;
+    }
+  } elsif (/^\d+$/) {
+    push @sorttype, $sorttype;
+    push @sortdir, $sortdir;
+    push @sortcode, '$v['.$_.']';
+  } elsif (/^(\w+)\:(\w+)$/) {
+    my ($col, $macro) = ($1, $2);
+    die "invalid column '$col'" unless $col =~ /^\d+$/;
+    if ($macro eq 'time') {
+      push @sorttype, 0;
+      push @sortdir, $sortdir;
+      push @sortcode, 'str2time($v['.$col.'])';
+    } elsif ($macro eq 'domain') {
+      push @sorttype, 1;
+      push @sortdir, $sortdir;
+      push @sortcode, 'join(".", reverse split(/\\./, $v['.$col.']))';
+    } elsif ($macro eq 'mixed') {
+      push @sorttype, 1;
+      push @sortdir, $sortdir;
+      push @sortcode, 'my @s=split(/(\\d+)/,$v['.$col.'],-1);$s[0].join("\\0\\0",map{pack("N",$s[$_*2-1]),$s[$_*2]}(1..int(@s/2)))';
+    } else {
+      die "unknown macro $macro";
+    }
+  } else {
+    push @sorttype, $sorttype;
+    push @sortdir, $sortdir;
+    push @sortcode, $_;
+  }
+}
+
+my @data;
+eval('my @v; while(<STDIN>){chomp;@v=split(/\t/);push @data, [['.join(',', map{"do{$_}"} @sortcode).'],$_] }');
+die "during eval of sortcode: $@" if $@;
+
+eval('sub datasort { '.join(' || ', map{'('.($sortdir[$_]?'$b':'$a')."->[0][$_] ".($sorttype[$_]?'cmp':'<=>').' '.($sortdir[$_]?'$a':'$b')."->[0][$_])"} 0..$#sortcode).' }');
+die "during eval of sorttype/sortdir: $@" if $@;
+
+for my $line (sort datasort @data) {
+  print $line->[1]."\n";
+}

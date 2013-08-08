@@ -1,0 +1,44 @@
+use warnings;
+use strict;
+
+use Date::Parse;
+
+my @ua=([ie10=>qr/\bMSIE 10\b/],[ie9=>qr/\bMSIE 9\b/],[ie8=>qr/\bMSIE 8\b/],[ie7=>qr/\bMSIE 7\b/],[ie6=>qr/\bMSIE 6\b/],[chrome=>qr/\bChrome\//],[firefox=>qr/\bFirefox\//],[safari=>qr/\bSafari\//]);
+sub ua_class {
+  my $ua = shift;
+  for my $class (@ua) {
+    return $class->[0] if $ua=~$class->[1];
+  }
+  return "other";
+}
+
+sub dashzero { $_[0] eq '-' ? 0 : $_[0] }
+
+my $re_str_dq = qr/[^\"\\]*(?:\\.[^\"\\]*)*/;
+
+# because only the regex prefix is built, this format will work for both 'combined' and 'common' logs:
+# LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined
+# LogFormat "%h %l %u %t \"%r\" %>s %b" common
+return [
+  [ip        => qr/\S+/,      ],
+  ' ',
+  [logname   => qr/\S+/,      ],
+  ' ',
+  [user      => qr/\S+/,      ],
+  ' [',
+  [datetime  => qr/[^\]]+/,   {epoch=>\&str2time}],
+  '] "',
+  [method    => qr/\w+/,      ],
+  ' ',
+  [path      => qr/[^\"\s]+/, ],
+  ' ',
+  [protocol  => qr/[^\"]+/,   ],
+  '" ',
+  [status    => qr/\d+/,      ],
+  ' ',
+  [bytes     => qr/\d+|\-/,   {numeric=>\&dashzero}],
+  ' "',
+  [referrer  => $re_str_dq,   ],
+  '" "',
+  [useragent => $re_str_dq,   {class=>\&ua_class}],
+];

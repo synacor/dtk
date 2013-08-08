@@ -1,0 +1,42 @@
+#!/usr/bin/perl -w
+use strict;
+
+if (@ARGV && $ARGV[0] =~ /^(?:\-\?|\-h|\-\-help)$/) {
+  print STDERR <<'EOF';
+usage: dtk uc [asc] [desc] [<limit>]
+
+This tool provides Unique Counts of data.  It behaves much like `| sort | uniq -c | sort -n | head -n ...` except that it is much faster and supports easy ordering and limits.
+
+asc - sort the output by frequency in ascending order (default).
+desc - sort the output by frequency in descending order.
+<limit> - stop after <limit> results, much like a subsequent `| head -n <limit>`.
+
+For example, to get the ten most frequent lines of input, use:
+thing | dtk uc desc 10
+EOF
+  exit;
+}
+
+my $order = 1;
+my $limit = 0;
+foreach my $arg (@ARGV) {
+  if ($arg eq 'asc') {
+    $order = 1;
+  } elsif ($arg eq 'desc') {
+    $order = -1;
+  } elsif ($arg =~ /^\d+$/) {
+    $limit = $arg;
+  } else {
+    die "invalid argument $arg";
+  }
+}
+
+my %n;
+while (<STDIN>) {
+  $n{$_}++;
+}
+
+for (sort {$order*($n{$a}<=>$n{$b})} keys %n) {
+  print "$n{$_}\t$_";
+  last unless --$limit;
+}

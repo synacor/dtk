@@ -1,0 +1,152 @@
+#!/usr/bin/perl -w
+use strict;
+
+use POSIX qw(floor);
+use IO::Handle;
+
+# pseudoconstants
+my %term = (
+  w => $ENV{DTK_COLS} || `tput cols`,
+  h => $ENV{DTK_LINES} || `tput lines`,
+);
+chomp($term{$_}) for keys %term;
+
+# user input
+my %conf = (
+  mode => $ENV{DTK_MODE},
+  xl   => undef,
+  xh   => undef,
+  yl   => undef,
+  yh   => undef,
+  calc_view => 1,
+  flush_size => 10,
+  help => 0,
+);
+
+my $num_re = qr/\-?(?:\d+|\d*\.\d+)/;
+
+foreach my $arg (@ARGV) {
+  if ($arg =~ /^view\=($num_re)\.\.($num_re)\,($num_re)\.\.($num_re)$/) {
+    ($conf{xl},$conf{xh},$conf{yl},$conf{yh}) = ($1, $2, $3, $4);
+  } elsif ($arg =~ /^([xy][lh])\=($num_re)$/) {
+    $conf{$1} = $2;
+  } elsif ($arg =~ /^flush_size\=(\d+)$/) {
+    die "flush_size must be a positive integer" unless $1;
+    $conf{flush_size} = $1;
+  } elsif ($arg =~ /^(?:\-\?|\-h|\-\-help)$/) {
+    $conf{help} = 1;
+  } else {
+    die "invalid argument: $arg\n";
+  }
+}
+
+if ($conf{help}) {
+  print STDERR <<EOF;
+usage: dtk plot [<options>]
+
+This tool takes rows of tab-delimited x,y pairs on STDIN.  For each pair, a marker will be placed at the given coordinates.  A third value can specify the marker color; valid values are \e[1;31m1 \e[32m2 \e[33m3 \e[34m4 \e[35m5 \e[36m6 \e[37m7\e[0m; if none is given, '7' is assumed.
+
+If all four view limits are provided (either individually or via the 'view' option), output will be animated as points arrive on STDIN.
+
+Options are of the form k=v, as in `dtk plot a=1 b=2 c=3`.
+view=<xl>..<xh>,<yl>..<yh>
+  Sets the viewport to xl <= x <= xh, yl <= y <= yh.  For example, many
+  graphing calculators default to "view=-10..10,-10..10".  If not provided, it
+  will be automatically determined by reading in all data before graphing any
+  of it.
+{xl,xh,yl,yh}=<bound>
+  Sets the given bound (x-low, x-high, y-low, y-high) of the viewport.
+flush_size=<size>
+  If all four view limits are provided, the display will be updated after every
+  flush_size lines of input. (default 10)
+EOF
+  exit;
+}
+
+my @data;
+if (grep {!defined $conf{$_}} qw(xl xh yl yh)) {
+  my %findlimit = map {$_ => !defined $conf{$_}} qw(xl xh yl yh);
+  while (<STDIN>) {
+    my @pt = parse_pt($_);
+    $conf{xl} = $pt[0] if $findlimit{xl} && (!defined $conf{xl} || $pt[0] < $conf{xl});
+    $conf{xh} = $pt[0] if $findlimit{xh} && (!defined $conf{xh} || $pt[0] > $conf{xh});
+    $conf{yl} = $pt[1] if $findlimit{yl} && (!defined $conf{yl} || $pt[1] < $conf{yl});
+    $conf{yh} = $pt[1] if $findlimit{yh} && (!defined $conf{yh} || $pt[1] > $conf{yh});
+    push @data, \@pt;
+  }
+  draw_init();
+  for (@data) {
+    my @pt = @$_;
+    next if $pt[0] < $conf{xl} || $pt[0] > $conf{xh} || $pt[1] < $conf{yl} || $pt[1] > $conf{yh};
+    draw_pt(@pt);
+  }
+} else {
+  draw_init();
+  STDOUT->flush();
+  while (<STDIN>) {
+    my @pt = parse_pt($_);
+    next if $pt[0] < $conf{xl} || $pt[0] > $conf{xh} || $pt[1] < $conf{yl} || $pt[1] > $conf{yh};
+    draw_pt(@pt);
+    STDOUT->flush() unless $. % $conf{flush_size};
+  }
+}
+
+$|=1;
+print loc($term{h}, $term{w}) . "\e[0m";
+if (-t STDOUT) {
+  sleep 1 while 1;
+}
+
+sub parse_pt {
+  chomp(my $v = shift);
+  my @pt = split(/\t/, $v);
+  die unless @pt >= 2 && @pt <= 3 && $pt[0] =~ $num_re && $pt[1] =~ $num_re && (@pt < 3 || $pt[2] =~ /^[1-7]$/);
+  return @pt;
+}
+
+sub draw_init {
+  system("clear");
+
+  print "\e[0;30;1m";
+
+  my $has_x0 = 0 >= $conf{xl} && 0 <= $conf{xh};
+  my $has_y0 = 0 >= $conf{yl} && 0 <= $conf{yh};
+
+  my ($x0c, $y0r);
+
+  if ($has_x0) {
+    $x0c = x2c(0);
+    print loc($_, $x0c) . "|" for y2r($conf{yh})..y2r($conf{yl});
+  }
+
+  if ($has_y0) {
+    $y0r = y2r(0);
+    print loc($y0r, $_) . "-" for x2c($conf{xl})..x2c($conf{xh});
+  }
+
+  if ($has_x0 && $has_y0) {
+    print loc($y0r,$x0c) . "+";
+  }
+
+  print "\e[0m";
+}
+
+BEGIN {
+  my $last_c = 0;
+  sub draw_pt {
+    my ($x, $y, $c) = @_;
+    $c ||= 7;
+
+    print loc(y2r($y), x2c($x));
+    if ($c != $last_c) { print "\e[3${c}m"; $last_c = $c; }
+    print "O";
+  }
+}
+
+sub interpolate {
+  my ($v, $il, $ih, $ol, $oh) = @_;
+  return ($v - $il) / ($ih - $il) * ($oh - $ol) + $ol;
+}
+sub x2c { floor(-.5+interpolate($_[0], $conf{xl}, $conf{xh}, 1, $term{w})) }
+sub y2r { floor(-.5+interpolate($_[0], $conf{yh}, $conf{yl}, 1, $term{h})) }
+sub loc { "\e[$_[0];$_[1]H" }

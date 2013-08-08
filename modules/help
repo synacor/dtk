@@ -1,0 +1,46 @@
+#!/usr/bin/perl -w
+use strict;
+
+if (@ARGV) {
+  my $mod = shift;
+  my $modbin = module_bin($mod);
+  $ENV{DTK_MODE} = $mod;
+  exec $modbin $mod, '--help', @ARGV;
+}
+
+my @mods = module_list();
+
+print <<EOF;
+usage: dtk <module> [<args>]
+
+The available modules are:
+EOF
+print map {"  $_\n"} sort @mods;
+print <<EOF;
+
+See 'dtk help <module>' for more information on a specific module; this is the same as calling 'dtk <module> --help'.
+EOF
+
+sub module_bin {
+  my ($module) = @_;
+
+  foreach my $moddir (split(/\:/, $ENV{DTK_MODPATH})) {
+    my $modbin = "$moddir/$module";
+    next unless -f $modbin && -x _;
+    return $modbin;
+  }
+
+  die "failed to find requested dtk module '$module' in $ENV{DTK_MODPATH}\n";
+}
+
+sub module_list {
+  my %modules;
+
+  foreach my $moddir (split/\:/, $ENV{DTK_MODPATH}) {
+    opendir(MODULES, $moddir) or next;
+    $modules{$_} = 1 for grep {/^[a-z]\w*$/ && -f "$moddir/$_" && -x _} readdir(MODULES);
+    closedir MODULES;
+  }
+
+  return sort keys %modules;
+}

@@ -1,0 +1,22 @@
+#!/usr/bin/perl -w
+use strict;
+
+use constant DEFAULT_MODDIR => '/usr/libexec/dtk-modules';
+
+die "usage: $0 <module>\n\nFor a list of commands, try: $0 help\n" unless @ARGV;
+
+my $module = $ARGV[0];
+die "invalid module '$module'\n" unless $module =~ /^[a-z]\w*$/;
+
+$ENV{DTK_MODPATH} = DEFAULT_MODDIR unless exists $ENV{DTK_MODPATH} && length $ENV{DTK_MODPATH};
+$ENV{DTK_MODPATH} = join(":", map { length $_ ? $_ : DEFAULT_MODDIR } split(/\:/, $ENV{DTK_MODPATH}, -1));
+foreach my $moddir (split(/\:/, $ENV{DTK_MODPATH})) {
+  my $modbin = "$moddir/$module";
+  next unless -f $modbin && -x _;
+
+  $ENV{DTK_MODE} = $module;
+  exec $modbin @ARGV;
+  exit; #in case exec() fails
+}
+
+die "failed to find requested dtk module '$module' in $ENV{DTK_MODPATH}\n";

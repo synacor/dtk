@@ -1,0 +1,65 @@
+#!/usr/bin/perl -w
+use strict;
+
+if (@ARGV && $ARGV[0] =~ /^(?:\-\?|\-h|\-\-help)$/) {
+  print STDERR <<'EOF';
+usage: dtk stats
+
+This tool calculates the count, min, max, sum, mean, variance, standard deviation, and skew of a single-column numeric dataset.
+
+For example, here are statistics for x**2 where 0<x<1:
+
+perl -e 'print +(rand()**2)."\n" for 1..100000' | dtk stats
+
+count:    100000
+min:      2.33499192215199e-10
+max:      0.999990504254054
+sum:      33318.5445306856
+mean:     0.333185445306856
+variance: 0.0889566868319077
+stddev:   0.298256075934603
+skew:     0.635926108473532
+EOF
+  exit;
+}
+
+my $n = 0;
+my $min = 1e300;
+my $max = -1e300;
+my $sx1 = 0;
+my $sx2 = 0;
+my $sx3 = 0;
+while (<STDIN>) {
+  chomp;
+  $n++;
+  $min = $_ if $_ < $min;
+  $max = $_ if $_ > $max;
+  $sx1 += $_;
+  $sx2 += $_**2;
+  $sx3 += $_**3;
+}
+
+die "no data" unless $n;
+
+my $ex1 = $sx1 / $n;
+my $ex2 = $sx2 / $n;
+my $ex3 = $sx3 / $n;
+
+my $mean = $ex1;
+my $variance = $ex2 - $ex1**2;
+my ($stddev, $skew) = (0, 0);
+if ($variance) {
+  $stddev = sqrt($variance);
+  $skew = ($ex3 - 3 * $ex1 * $ex2 + 2 * $ex1**3) / $stddev**3;
+}
+
+print <<EOF;
+count:    $n
+min:      $min
+max:      $max
+sum:      $sx1
+mean:     $ex1
+variance: $variance
+stddev:   $stddev
+skew:     $skew
+EOF

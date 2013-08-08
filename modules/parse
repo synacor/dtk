@@ -1,0 +1,115 @@
+#!/usr/bin/perl -w
+use strict;
+
+if (!@ARGV || @ARGV > 2 || $ARGV[0] =~ /^(?:\-\?|\-h|\-\-help)$/) {
+  if (@ARGV > 1) {
+    my @format = format_load($ARGV[1]);
+    print STDERR "Fields (and filters) for format '$ARGV[1]' are:\n";
+    print STDERR map {"  $_->[0]".($_->[2] ? " (".join(", ",keys %{$_->[2]}).")" : "")."\n"} grep {ref eq 'ARRAY'} @format;
+  } else {
+    print STDERR <<'EOF';
+usage: dtk parse <format> [<field>[:<filter>][,...]]
+
+This tool can parse specific file formats and produce the fields of each record in dtk-friendly tab-delimited output.  For example, to get the status, datetime (as an epoch time), and ip of each entry of an access log (in that order), you could do:
+
+zcat access_log.gz | dtk parse apache_access status,datetime:epoch,ip
+
+For details on a specific format, use 'dtk parse --help <format>'.  Known formats are:
+EOF
+    print STDERR map {"  $_\n"} format_list();
+  }
+  exit;
+}
+
+my @format = format_load($ARGV[0]);
+
+my @fields;
+if (@ARGV == 2) {
+  @fields = map {/^(\w+)\:(\w+)$/ ? [$1,$2] : [$_,undef]} split(/\,/, $ARGV[1]);
+} else {
+  @fields = map {[$_->[0],undef]} grep {ref eq 'ARRAY'} @format;
+}
+my %fieldindex = map { $fields[$_][0] => $_ } 0..$#fields;
+
+my $re = '';
+my $ci = 0;
+my @filters;
+my @matchindex_of_field;
+foreach my $token (@format) {
+  last unless %fieldindex;
+  if (!ref $token) {
+    $re .= quotemeta($token);
+  } elsif (ref $token eq 'Regexp') {
+    $re .= $token;
+  } elsif (exists $fieldindex{$token->[0]}) {
+    my $filter = $fields[$fieldindex{$token->[0]}][1];
+    if (defined $filter) {
+      if (!$token->[2] || !exists $token->[2]{$filter}) {
+        print STDERR "Format '$ARGV[0]' field '$token->[0]' does not provide filter '$filter'!\n";
+        exit;
+      }
+      push @filters, [$ci, $token->[2]{$filter}];
+    }
+    $re .= '('.$token->[1].')';
+    $matchindex_of_field[delete $fieldindex{$token->[0]}] = $ci;
+    $ci++;
+  } else {
+    $re .= $token->[1];
+  }
+}
+
+if (%fieldindex) {
+  print STDERR "The following fields were requested but not provided by format '$ARGV[0]': " . join(", ", sort keys %fieldindex) . "\n";
+  exit;
+}
+
+my $re_re = qr/^$re/o;
+
+my $skipped = 0;
+my @matches;
+while (<STDIN>) {
+  unless (@matches = /$re_re/) {
+    $skipped++;
+    next;
+  }
+  foreach my $filter (@filters) {
+    $matches[$filter->[0]] = $filter->[1]($matches[$filter->[0]]);
+  }
+  print join("\t", map {$matches[$matchindex_of_field[$_]]} 0..$#fields) . "\n";
+}
+print STDERR "dtk parse: Skipped $skipped invalid records.\n" if $skipped;
+
+exit;
+
+
+sub format_load {
+  my ($format) = @_;
+
+  die "invalid format '$format'\n" unless $format =~ /^[a-z]\w*$/;
+
+  foreach my $moddir (split/\:/, $ENV{DTK_MODPATH}) {
+    my $def = "$moddir/parse-formats/$format";
+    next unless -f $def && -x _;
+
+    my $result = do $def;
+    die "failed to read parse-format '$format' from $def: $!\n" if !defined $result && $!;
+    die "failed to compile parse-format '$format' from $def: $@\n" if !defined $result && $@;
+    die "bad result from parse-format '$format' from $def: expected an arrayref, but instead got:\n".Dumper($result)."\n" unless ref $result eq 'ARRAY';
+    return @$result;
+  }
+
+  die "failed to locate parse-format named '$format'\n";
+}
+
+sub format_list {
+  my %formats;
+
+  foreach my $moddir (split/\:/, $ENV{DTK_MODPATH}) {
+    my $formatdir = "$moddir/parse-formats";
+    opendir(FORMATS, $formatdir) or next;
+    $formats{$_} = 1 for grep {/^[a-z]\w*$/ && -f "$formatdir/$_" && -x _} readdir(FORMATS);
+    closedir FORMATS;
+  }
+
+  return sort keys %formats;
+}

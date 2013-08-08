@@ -1,0 +1,507 @@
+#!/usr/bin/perl -w
+use strict;
+
+use POSIX qw(floor strftime);
+
+# pseudoconstants
+my %term = (
+  w => $ENV{DTK_COLS} || `tput cols`,
+  h => $ENV{DTK_LINES} || `tput lines`,
+);
+
+# user input
+my %conf = (
+  mode => $ENV{DTK_MODE},
+  v => [],
+  help => 0,
+);
+
+foreach my $arg (@ARGV) {
+  if ($arg =~ /^v(\d+)([a-z]+)\=(.+)$/) {
+    $conf{v}[$1]{$2} = $3;
+  } elsif ($arg =~ /^(?:\-\?|\-h|\-\-help)$/) {
+    $conf{help} = 1;
+  } else {
+    die "invalid argument: $arg\n";
+  }
+}
+
+# datatype processing
+my %type; %type = (
+  n => {
+    init => sub {
+      my ($ti) = @_;
+      my $conf = $conf{v}[$ti];
+      my $bucketspecnum = 0;
+      $bucketspecnum++ if $conf->{bn};
+      $bucketspecnum++ if $conf->{bs};
+      $bucketspecnum++ if $conf->{bd};
+      die "must provide exactly one of bn (bucket num), bs (bucket size), or bd (bucket disable) for type=n conf{v}[$ti]" unless $bucketspecnum == 1;
+      $conf->{ft} = "sprintf" unless defined $conf->{ft};
+      die "must provide either 'sprintf' or 'strftime' for ft on conf{v}[$ti]" unless $conf->{ft} =~ /^(?:sprintf|strftime)$/;
+      $conf->{f} = $conf->{ft} eq 'sprintf' ? "%.02f" : "%F %T" unless defined $conf->{f};
+      die "must provide a format including '%' for f on conf{v}[$ti]" unless $conf->{f} =~ /\%/;
+      $conf->{bo} = "value" unless defined $conf->{bo};
+      die "invalid bucket order for bo on conf{v}[$ti]" unless exists $type{n}{bucketorder}{$conf->{bo}};
+    },
+    bucketorder => {
+      value => sub { $_[0] }, # numeric columns are naturally value-sorted
+      count => sub { [sort {$a->{ct} <=> $b->{ct}} @{$_[0]}] },
+    },
+    descend_byvalue => sub {
+      my ($t, $ti, $v, $fieldref) = @_;
+      my $bi = $type{n}{bucket}($t, $ti, $v);
+      return \($$fieldref->[$bi]);
+    },
+    descend_bybucket => sub {
+      my ($t, $ti, $v, $fieldref) = @_;
+      return \($$fieldref->[$v]);
+    },
+    input_each => sub {
+      my ($t, $ti, $v) = @_;
+      die "invalid value (not a number) at stdin line $. value $ti" unless $v =~ /\-?\d+(?:\.\d+)?(?:[eE]\-?\d+)?/;
+      $t->[$ti]{l} = $v if !defined $t->[$ti]{l} || $v < $t->[$ti]{l};
+      $t->[$ti]{h} = $v if !defined $t->[$ti]{h} || $v > $t->[$ti]{h};
+      return $v;
+    },
+    bucket => sub {
+      my ($t, $ti, $v) = @_;
+      my $bi;
+      if ($conf{v}[$ti]{bn}) {
+        $bi = floor(
+            ($v           - $t->[$ti]{l})
+          / (($t->[$ti]{h} - $t->[$ti]{l}) || 1)
+          * ($conf{v}[$ti]{bn})
+        );
+        $bi = $conf{v}[$ti]{bn}-1 if $bi > $conf{v}[$ti]{bn}-1;
+      } elsif ($conf{v}[$ti]{bs}) {
+        $bi = floor(($v-$t->[$ti]{l}) / $conf{v}[$ti]{bs});
+      } else {
+        return 0;
+      }
+      return $bi;
+    },
+    bucket_each => sub {
+      my ($t, $ti, $v) = @_;
+      my $bi = $type{n}{bucket}($t, $ti, $v);
+      $t->[$ti]{b}[$bi]{c}++;
+      $t->[$ti]{b}[$bi]{l} = $v if !defined $t->[$ti]{b}[$bi]{l} || $v < $t->[$ti]{b}[$bi]{l};
+      $t->[$ti]{b}[$bi]{h} = $v if !defined $t->[$ti]{b}[$bi]{h} || $v > $t->[$ti]{b}[$bi]{h};
+    },
+    bucket_post => sub {
+      my ($t, $ti, $bi) = @_;
+      $t->[$ti]{b}[$bi]{c} ||= 0;
+      $t->[$ti]{m} = $t->[$ti]{b}[$bi]{c} if !defined $t->[$ti]{m} || $t->[$ti]{b}[$bi]{c} > $t->[$ti]{m};
+      if ($t->[$ti]{b}[$bi]{c}) {
+        $t->[$ti]{b}[$bi]{l} = vformat($conf{v}[$ti], $t->[$ti]{b}[$bi]{l});
+        $t->[$ti]{b}[$bi]{h} = vformat($conf{v}[$ti], $t->[$ti]{b}[$bi]{h});
+      } else {
+        ($t->[$ti]{b}[$bi]{l}, $t->[$ti]{b}[$bi]{h}) = ("","");
+      }
+      if (!defined $conf{v}[$ti]{cl} || $t->[$ti]{b}[$bi]{c} >= $conf{v}[$ti]{cl}) {
+        $t->[$ti]{nwl} = length $t->[$ti]{b}[$bi]{l} if !defined $t->[$ti]{nwl} || length $t->[$ti]{b}[$bi]{l} > $t->[$ti]{nwl};
+        $t->[$ti]{nwh} = length $t->[$ti]{b}[$bi]{h} if !defined $t->[$ti]{nwh} || length $t->[$ti]{b}[$bi]{h} > $t->[$ti]{nwh};
+        $t->[$ti]{cw}  = length $t->[$ti]{b}[$bi]{c} if !defined $t->[$ti]{cw}  || length $t->[$ti]{b}[$bi]{c} > $t->[$ti]{cw} ;
+      }
+    },
+    metadata => sub {
+      my ($t, $ti) = @_;
+      my @b = @{$t->[$ti]{b}};
+      return {
+        lw => $t->[$ti]{nwl}+$t->[$ti]{nwh}+2, #labelwidth
+        cw => $t->[$ti]{cw}, #countwidth
+        mc => $t->[$ti]{m}, #max count
+        buckets => $type{n}{bucketorder}{$conf{v}[$ti]{bo}}([
+          map {+{
+            lb => sprintf("%*s..%*s", $t->[$ti]{nwl}, $b[$_]{l}, -$t->[$ti]{nwh}, $b[$_]{h}), #label
+            ct => $b[$_]{c},  #count
+            ix => $_, #index
+            l  => $b[$_]{l}||undef,
+            h  => $b[$_]{h}||undef,
+          }} grep {!defined $conf{v}[$ti]{cl} || $b[$_]{c} >= $conf{v}[$ti]{cl}} 0..$#b
+        ]),
+      };
+    },
+  },
+  s => {
+    init => sub {
+      my ($ti) = @_;
+      my $conf = $conf{v}[$ti];
+      die "cannot provide any of bn (bucket num), bs (bucket size), or bd (bucket disable) for type=s conf{v}[$ti]" if $conf->{bn} || $conf->{bs} || $conf->{bd};
+      $conf->{bo} = "value" unless defined $conf->{bo};
+      die "invalid bucket order for bo on conf{v}[$ti]" unless exists $type{s}{bucketorder}{$conf->{bo}};
+    },
+    bucketorder => {
+      value => sub { [sort {$a->{ix} cmp $b->{ix}} @{$_[0]}] },
+      count => sub { [sort {$a->{ct} <=> $b->{ct}} @{$_[0]}] },
+    },
+    regex => qr/[^\t]+/,
+    descend_byvalue => sub {
+      my ($t, $ti, $v, $fieldref) = @_;
+      return \($$fieldref->{$v});
+    },
+    descend_bybucket => sub {
+      my ($t, $ti, $v, $fieldref) = @_;
+      return \($$fieldref->{$v});
+    },
+    input_each => sub {
+      my ($t, $ti, $v) = @_;
+      return $v;
+    },
+    bucket_each => sub {
+      my ($t, $ti, $v) = @_;
+      $t->[$ti]{b}{$v}{c}++;
+    },
+    bucket_post => sub {
+      my ($t, $ti, $k) = @_;
+      $t->[$ti]{b}{$k}{c} ||= 0;
+      $t->[$ti]{m} = $t->[$ti]{b}{$k}{c} if !defined $t->[$ti]{m} || $t->[$ti]{b}{$k}{c} > $t->[$ti]{m};
+      if (!defined $conf{v}[$ti]{cl} || $t->[$ti]{b}{$k}{c} >= $conf{v}[$ti]{cl}) {
+        $t->[$ti]{kw} = length $k                  if !defined $t->[$ti]{kw} || length $k                  > $t->[$ti]{kw};
+        $t->[$ti]{cw} = length $t->[$ti]{b}{$k}{c} if !defined $t->[$ti]{cw} || length $t->[$ti]{b}{$k}{c} > $t->[$ti]{cw};
+      }
+    },
+    metadata => sub {
+      my ($t, $ti) = @_;
+      return {
+        lw => $t->[$ti]{kw}, #labelwidth
+        cw => $t->[$ti]{cw}, #countwidth
+        mc => $t->[$ti]{m}, #max count
+        buckets => $type{s}{bucketorder}{$conf{v}[$ti]{bo}}([
+          map {+{
+            lb => sprintf("%*s", $t->[$ti]{kw}, $_), #label
+            ct => $t->[$ti]{b}{$_}{c},  #count
+            ix => $_, #index
+          }} grep {!defined $conf{v}[$ti]{cl} || $t->[$ti]{b}{$_}{c} >= $conf{v}[$ti]{cl}} keys %{$t->[$ti]{b}}
+        ]),
+      };
+    },
+  },
+);
+
+# render modes
+my %mode = (
+  hist1 => {
+    desc => "Takes a single column and draws a single-axis histogram from it.",
+    arity => 1,
+    init => sub {
+      for my $ti (0) {
+        if ($conf{v}[$ti]{t} eq 'n') {
+          my $conf = $conf{v}[$ti];
+          my $bucketspecnum = 0;
+          $bucketspecnum++ if $conf->{bn};
+          $bucketspecnum++ if $conf->{bs};
+          $bucketspecnum++ if $conf->{bd};
+          $conf->{bn} = 10 unless $bucketspecnum;
+        }
+      }
+    },
+    tuple_each => sub {
+      my ($t, $tuple, $modedata) = @_;
+    },
+    finalize => sub {
+      my ($t, $modedata) = @_;
+    },
+    draw => sub {
+      my ($t, $modedata) = @_;
+      my %meta = %{$type{$conf{v}[0]{t}}{metadata}($t, 0)};
+      foreach my $b (@{$meta{buckets}}) {
+        my $bw = $b->{ct}/$meta{mc}*($term{w}-$meta{lw}-$meta{cw}-4);
+        my $bwi = int $bw;
+        printf "%*s %*s %s\n", $meta{lw}, $b->{lb}, $meta{cw}, $b->{ct}, ("="x$bw).($bw-$bwi>.5?"-":"");
+      }
+    },
+  },
+  hist2 => {
+    desc => "Takes two columns and draws a two-axis histogram from them.",
+    arity => 2,
+    init => sub {
+      for my $ti (0,1) {
+        if ($conf{v}[$ti]{t} eq 'n') {
+          my $conf = $conf{v}[$ti];
+          my $bucketspecnum = 0;
+          $bucketspecnum++ if $conf->{bn};
+          $bucketspecnum++ if $conf->{bs};
+          $bucketspecnum++ if $conf->{bd};
+          $conf->{bn} = 10 unless $bucketspecnum;
+        }
+      }
+    },
+    tuple_each => sub {
+      my ($t, $tuple, $modedata) = @_;
+      my $crossbucket = \($modedata->{crossbucket});
+      for my $ti (0..$#$tuple) {
+        $crossbucket = $type{$conf{v}[$ti]{t}}{descend_byvalue}($t, $ti, $tuple->[$ti], $crossbucket);
+      }
+      $$crossbucket++;
+    },
+    finalize => sub {
+      my ($t, $modedata) = @_;
+      my %a0meta = %{$type{$conf{v}[0]{t}}{metadata}($t, 0)};
+      my %a1meta = %{$type{$conf{v}[1]{t}}{metadata}($t, 1)};
+      foreach my $b0 (@{$a0meta{buckets}}) {
+        foreach my $b1 (@{$a1meta{buckets}}) {
+          my $crossbucket = \($modedata->{crossbucket});
+          $crossbucket = $type{$conf{v}[0]{t}}{descend_bybucket}($t, 0, $b0->{ix}, $crossbucket);
+          $crossbucket = $type{$conf{v}[1]{t}}{descend_bybucket}($t, 1, $b1->{ix}, $crossbucket);
+          my $v = $$crossbucket || 0;
+          $modedata->{crossmax} = $v if !defined $modedata->{crossmax} || $v > $modedata->{crossmax};
+        }
+      }
+    },
+    draw => sub {
+      my ($t, $modedata) = @_;
+      my %a0meta = %{$type{$conf{v}[0]{t}}{metadata}($t, 0)};
+      my %a1meta = %{$type{$conf{v}[1]{t}}{metadata}($t, 1)};
+      for (my $b1i=0; $b1i<@{$a1meta{buckets}}; $b1i++) {
+        (my $label = $a1meta{buckets}[$b1i]{lb}) =~ s/^\s+|\s+$//g;
+        print +(" "x($a0meta{lw}+$a0meta{cw}+2)) . ("|  " x $b1i) . $label . " (" . $a1meta{buckets}[$b1i]{ct} . ")\n";
+      }
+      print +(" "x($a0meta{lw}+$a0meta{cw}+2)) . ("|\e[30;1m\\\e[0m " x scalar @{$a1meta{buckets}}) . "\n";
+      foreach my $b0 (@{$a0meta{buckets}}) {
+        printf "%*s %*s ", $a0meta{lw}, $b0->{lb}, $a0meta{cw}, $b0->{ct};
+        foreach my $b1 (@{$a1meta{buckets}}) {
+          my $crossbucket = \($modedata->{crossbucket});
+          $crossbucket = $type{$conf{v}[0]{t}}{descend_bybucket}($t, 0, $b0->{ix}, $crossbucket);
+          $crossbucket = $type{$conf{v}[1]{t}}{descend_bybucket}($t, 1, $b1->{ix}, $crossbucket);
+          my $v = $$crossbucket || 0;
+
+          print "\e[".vcolor($v/$modedata->{crossmax})."m".(sprintf "%02d", 99*$v/$modedata->{crossmax})."\e[0m ";
+        }
+        print "\n";
+      }
+    },
+  },
+  hist2_bycol => {
+    desc => "Draws several adjacent histograms from the first input column as grouped by data in the second input column.  Each column of output is a histogram of data from the first input column from some group based on the second input column.",
+    arity => 2,
+    init => sub {
+      for my $ti (0,1) {
+        if ($conf{v}[$ti]{t} eq 'n') {
+          my $conf = $conf{v}[$ti];
+          my $bucketspecnum = 0;
+          $bucketspecnum++ if $conf->{bn};
+          $bucketspecnum++ if $conf->{bs};
+          $bucketspecnum++ if $conf->{bd};
+          $conf->{bn} = 10 unless $bucketspecnum;
+        }
+      }
+    },
+    tuple_each => sub {
+      my ($t, $tuple, $modedata) = @_;
+      my $crossbucket = \($modedata->{crossbucket});
+      for my $ti (0..$#$tuple) {
+        $crossbucket = $type{$conf{v}[$ti]{t}}{descend_byvalue}($t, $ti, $tuple->[$ti], $crossbucket);
+      }
+      $$crossbucket++;
+    },
+    finalize => sub {
+      my ($t, $modedata) = @_;
+      my %a0meta = %{$type{$conf{v}[0]{t}}{metadata}($t, 0)};
+      my %a1meta = %{$type{$conf{v}[1]{t}}{metadata}($t, 1)};
+      foreach my $b0 (@{$a0meta{buckets}}) {
+        foreach my $b1 (@{$a1meta{buckets}}) {
+          my $crossbucket = \($modedata->{crossbucket});
+          $crossbucket = $type{$conf{v}[0]{t}}{descend_bybucket}($t, 0, $b0->{ix}, $crossbucket);
+          $crossbucket = $type{$conf{v}[1]{t}}{descend_bybucket}($t, 1, $b1->{ix}, $crossbucket);
+          my $v = $$crossbucket || 0;
+          my $bucketmax = $type{$conf{v}[1]{t}}{descend_bybucket}($t, 1, $b1->{ix}, \($modedata->{bucketmax}));
+          $$bucketmax = $v if !defined $$bucketmax || $v > $$bucketmax;
+        }
+      }
+    },
+    draw => sub {
+      my ($t, $modedata) = @_;
+      my %a0meta = %{$type{$conf{v}[0]{t}}{metadata}($t, 0)};
+      my %a1meta = %{$type{$conf{v}[1]{t}}{metadata}($t, 1)};
+      for (my $b1i=0; $b1i<@{$a1meta{buckets}}; $b1i++) {
+        (my $label = $a1meta{buckets}[$b1i]{lb}) =~ s/^\s+|\s+$//g;
+        print +(" "x($a0meta{lw}+$a0meta{cw}+2)) . ("|  " x $b1i) . $label . " (" . $a1meta{buckets}[$b1i]{ct} . ")\n";
+      }
+      print +(" "x($a0meta{lw}+$a0meta{cw}+2)) . ("|\e[30;1m\\\e[0m " x scalar @{$a1meta{buckets}}) . "\n";
+      foreach my $b0 (@{$a0meta{buckets}}) {
+        printf "%*s %*s ", $a0meta{lw}, $b0->{lb}, $a0meta{cw}, $b0->{ct};
+        foreach my $b1 (@{$a1meta{buckets}}) {
+          my $crossbucket = \($modedata->{crossbucket});
+          $crossbucket = $type{$conf{v}[0]{t}}{descend_bybucket}($t, 0, $b0->{ix}, $crossbucket);
+          $crossbucket = $type{$conf{v}[1]{t}}{descend_bybucket}($t, 1, $b1->{ix}, $crossbucket);
+          my $v = $$crossbucket || 0;
+          my $bucketmax = ${$type{$conf{v}[1]{t}}{descend_bybucket}($t, 1, $b1->{ix}, \($modedata->{bucketmax}))} || 1;
+
+          print "\e[".vcolor($v/$bucketmax)."m".(sprintf "%02d", 99*$v/$bucketmax)."\e[0m ";
+        }
+        print "\n";
+      }
+    },
+  },
+  delta1 => {
+    desc => "Using two input columns, draws a single-axis histogram of the data in the first input column using positive or negative weights from the second input column.  For example, you could display the difference between a control group and a test group by providing the control data with each weight set to -1 and the test data with each weight set to 1.",
+    arity => 2,
+    init => sub {
+      die "conf{v}[1]{t} must be 'n'" unless $conf{v}[1]{t} eq 'n';
+      die "cannot use bn (bucket num) or bs (bucket size) conf{v}[1] during delta1" if $conf{v}[1]{bn} || $conf{v}[1]{bs};
+      $conf{v}[1]{bd} = 1;
+
+      for my $ti (0) {
+        if ($conf{v}[$ti]{t} eq 'n') {
+          my $conf = $conf{v}[$ti];
+          my $bucketspecnum = 0;
+          $bucketspecnum++ if $conf->{bn};
+          $bucketspecnum++ if $conf->{bs};
+          $bucketspecnum++ if $conf->{bd};
+          $conf->{bn} = 10 unless $bucketspecnum;
+        }
+      }
+    },
+    tuple_each => sub {
+      my ($t, $tuple, $modedata) = @_;
+      my $crossbucket = \($modedata->{crossbucket});
+      my $sum = $type{$conf{v}[0]{t}}{descend_byvalue}($t, 0, $tuple->[0], \($modedata->{sums}));
+      $$sum += $tuple->[1];
+    },
+    finalize => sub {
+      my ($t, $modedata) = @_;
+      my %a0meta = %{$type{$conf{v}[0]{t}}{metadata}($t, 0)};
+      foreach my $b0 (@{$a0meta{buckets}}) {
+        my $sum = $type{$conf{v}[0]{t}}{descend_bybucket}($t, 0, $b0->{ix}, \($modedata->{sums}));
+        $$sum = vformat($conf{v}[1], $$sum||0);
+        my $abs = abs($$sum);
+        $modedata->{sumabsmax} = $abs if !defined $modedata->{sumabsmax} || $abs > $modedata->{sumabsmax};
+        $modedata->{sumlenmax} = length $$sum if !defined $modedata->{sumlenmax} || length $$sum > $modedata->{sumlenmax};
+      }
+    },
+    draw => sub {
+      my ($t, $modedata) = @_;
+      my %meta = %{$type{$conf{v}[0]{t}}{metadata}($t, 0)};
+
+      my $bar_space = floor(($term{w} - $meta{lw} - 1 - $modedata->{sumlenmax} - 2 - 1)/2); #label, space, value, space, divider
+      foreach my $b (@{$meta{buckets}}) {
+        my $sum = ${$type{$conf{v}[0]{t}}{descend_bybucket}($t, 0, $b->{ix}, \($modedata->{sums}))} || 0;
+        printf "%*s %*s  ", $meta{lw}, $b->{lb}, $modedata->{sumlenmax}, $sum;
+        my $v = $sum / $modedata->{sumabsmax};
+        my $bw = abs($v) * $bar_space;
+        my $bwi = int $bw;
+        my $fillercolor = $conf{v}[0]{ft} ne 'strftime' && defined $b->{l} && defined $b->{h} && $b->{l}<=0 && 0<=$b->{h} ? "\e[1m" : "\e[1;30m";
+        if ($v < 0) {
+          my $bar = "";
+          $bar .= "-" if $bw - $bwi > .5;
+          $bar .= "=" x $bwi;
+          print $fillercolor.("-" x ($bar_space - length($bar)))."\e[0m";
+          print $b->{ct} > 30 ? "\e[31m" : "";
+          print "$bar\e[0m";
+        } else {
+          print $fillercolor.("-" x $bar_space)."\e[0m";
+        }
+        print "|";
+        if ($v > 0) {
+          my $bar = "";
+          $bar .= "=" x $bwi;
+          $bar .= "-" if $bw - $bwi > .5;
+          print $b->{ct} > 30 ? "\e[32m" : "";
+          print "$bar\e[0m";
+          print $fillercolor.("-" x ($bar_space - length($bar)))."\e[0m";
+        } else {
+          print $fillercolor.("-" x $bar_space)."\e[0m";
+        }
+        print "\n";
+      }
+    },
+  },
+);
+
+die "unknown mode $conf{mode}" unless exists $mode{$conf{mode}};
+my $mode = $mode{$conf{mode}};
+
+if ($conf{help}) {
+  print STDERR <<EOF;
+usage: dtk $conf{mode} [<options>]
+
+$mode->{desc}
+
+This tool is part of the dtk histogram suite, all of which take rows of tab-delimited data on STDIN and use the following conventions:
+
+Options on a specific input column are v<n><p>=<v>, where <n> is the input column (from zero), <p> is the property to set, and <v> is the value of the property.
+v#t  - type; 'n' for numeric, 's' for string
+v#bn - bucket number; the integer number of buckets to use
+v#bs - bucket size; the width of each bucket
+v#bd - bucket disable; set to 1 to disable bucketing; usually set automatically when needed
+v#bo - bucket order; 'value' or 'count' (default: 'value')
+v#cl - count low; the minimum count a bucket from this column must have to be included (default: no limit)
+v#f  - format; takes sprintf or strftime formats (as specified by v#ft)
+v#ft - format type; either 'sprintf' or 'strftime'; defaults to 'sprintf' with v#f=%.02f; v#ft=strftime with no v#f defaults to v#f="%F %T"
+
+Only one of bn/bs/bd can be set for each input column and can only be set for v#t=n columns.
+
+For example:
+  ten buckets from the first input column: v0bn=10
+  buckets of width .2 for the second input column: v1bs=.2
+  first column is 20 formatted buckets, second column is string: v0bn=20 v0f=%.04f v1t=s
+EOF
+  exit;
+}
+
+for my $ti (0..$mode->{arity}-1) {
+  $conf{v}[$ti]{t} ||= "n";
+}
+
+$mode->{init}();
+
+for my $ti (0..$mode->{arity}-1) {
+  $type{$conf{v}[$ti]{t}}{init}($ti);
+}
+
+##########
+
+my (@v, @t, %modedata);
+
+while (<STDIN>) {
+  next if /^\s*$/;
+  chomp;
+  my @tuple = split /\t/;
+  die "invalid tuple length (".(scalar @tuple).", but expected $mode->{arity}) at stdin line $.; line was: $_\n" unless @tuple == $mode->{arity};
+  push @v, [ map { $type{$conf{v}[$_]{t}}{input_each}(\@t, $_, $tuple[$_]) } 0..$#tuple ];
+}
+
+die "no data!" unless @v;
+
+foreach my $tuple (@v) {
+  for my $ti (0..$#$tuple) {
+    $type{$conf{v}[$ti]{t}}{bucket_each}(\@t, $ti, $tuple->[$ti]);
+  }
+  $mode->{tuple_each}(\@t, $tuple, \%modedata);
+}
+
+foreach my $ti (0..$#t) {
+  if (ref $t[$ti]{b} eq 'ARRAY') {
+    for my $bi (0..$#{$t[$ti]{b}}) {
+      $type{$conf{v}[$ti]{t}}{bucket_post}(\@t, $ti, $bi);
+    }
+  } elsif (ref $t[$ti]{b} eq 'HASH') {
+    for my $k (keys %{$t[$ti]{b}}) {
+      $type{$conf{v}[$ti]{t}}{bucket_post}(\@t, $ti, $k);
+    }
+  } else {
+    die "tuple bucketset t[$ti]{b} was not an array or hash";
+  }
+}
+
+$mode->{finalize}(\@t, \%modedata);
+
+$mode->{draw}(\@t, \%modedata);
+
+
+############
+
+BEGIN {
+my @c = $ENV{TERM} eq 'xterm-256color' ? qw(48;5;232;38;5;237 48;5;233;38;5;238 48;5;234;38;5;239 48;5;235;38;5;240 48;5;236;38;5;241 48;5;237;38;5;242 48;5;238;38;5;243 48;5;239;38;5;244 48;5;240;38;5;245 48;5;241;38;5;246 48;5;242;38;5;247 48;5;243;38;5;248 48;5;244;38;5;249 48;5;245;38;5;250 48;5;246;38;5;251 48;5;247;38;5;252 48;5;248;38;5;253 48;5;249;38;5;254 48;5;250;38;5;255 48;5;251;38;5;232 48;5;252;38;5;233 48;5;253;38;5;234 48;5;254;38;5;235 48;5;255;38;5;236) : qw(40;30;1 41;30 43;30 42;30 46;30 44;30;1 45;30 47;30);
+sub vcolor {
+  my $v = shift;
+  my $i = int($v*@c); $i=$#c if $i>$#c;
+  return $c[$i];
+}
+}
+
+sub vformat {
+  my ($tupleconf, $v) = @_;
+  return $tupleconf->{ft} eq 'sprintf' ? sprintf($tupleconf->{f}, $v) : strftime($tupleconf->{f}, localtime $v);
+}
