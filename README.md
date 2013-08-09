@@ -1,6 +1,32 @@
-DTK (<strong>d</strong>ata <strong>t</strong>ool<strong>k</strong>it) is a suite of tools for parsing, analyzing, and graphing logs and other datasets. Most of the tools produce or operate on newline-terminated records containing tab-delimited fields, often called TSV ("<strong>t</strong>ab-<strong>s</strong>eparated <strong>v</strong>alues"). Unless otherwise specified, tools in DTK take input on STDIN and produce output on STDOUT.
+DTK (<strong>d</strong>ata <strong>t</strong>ool<strong>k</strong>it) is a suite of tools for parsing, analyzing, and graphing logs and other datasets.
 
-*Note:* In the following examples, a prefix of ``$`` indicates that the line is a command at a ``bash``-like shell prompt, and a token like ``<count>`` is a placeholder for some actual value named "count".
+In short, DTK converts *data* into *knowledge*.
+
+<sub>*Note:* In the examples in this document, a prefix of ``$`` indicates that the line is a command at a ``bash``-like shell prompt, and a token like ``<count>`` is a placeholder for some actual value named "count".</sub>
+
+# Introduction
+
+Are your logs just a huge pile of data you lug around because "you might need them some day"?  Do you make decisions without the knowledge locked away in those files because it's cumbersome to get from an Apache log to user behavior statistics?  Do you waste hours digging through logs to track down the root cause of an incident?  You're in the right place.  Have a seat.
+
+The modules in DTK follow the [Unix philosophy](http://en.wikipedia.org/wiki/Unix_philosophy) - they do one thing and do it well, they work together, and they operate on text streams.
+
+DTK provides many tools called "modules"; much like [Git](http://git-scm.com/), they are all accessible through the launcher ``dtk`` - ``dtk help``, ``dtk filter``, ``dtk parse``, etc.  Each module focuses on solving one kind of problem while accepting and producing data in a [reusable, common format](http://en.wikipedia.org/wiki/Tab-separated_values).
+
+Because of this, a DTK workflow often involves a [pipe chain](http://en.wikipedia.org/wiki/Pipeline_%28Unix%29) consisting of both DTK modules and other programs.  These can be simple or complex:
+
+```
+# flags and other arguments omitted for brevity:
+
+$ zcat | dtk parse | dtk hist1
+
+$ zcat | grep | cut | cut | dtk filter | dtk uc | dtk filter | dtk hist2_bycol
+
+$ cat <(zcat | dtk parse | dtk filter) <(zcat | dtk parse | dtk filter) | dtk delta1
+```
+
+Some DTK pipelines work like [map-reduce](http://en.wikipedia.org/wiki/MapReduce) jobs, and, in fact, the DTK suite is also quite effective when run in true [big data](http://en.wikipedia.org/wiki/Big_data) map-reduce environments such as [Hadoop Streaming](http://hadoop.apache.org/docs/stable/streaming.html).
+
+DTK prioritizes usefulness and efficiency over shiny interfaces and PowerPoint presentations.  These aren't your boss' tools (unless he also likes this sort of thing, of course).
 
 # ``dtk``
 
@@ -10,7 +36,9 @@ To get details on a specific module, use ``dtk help <module>``, which simply inv
 
 Some modules (like ``hist2`` and ``plot``) work better when more colors are available. For best results, get a terminal with 256-color support, and then set your ``TERM`` environment variable to ``xterm-256color``. If you are within screen, you may have to do this explicitly, like ``cat stuff | TERM=xterm-256color dtk hist2``.
 
-# General Modules
+# Modules
+
+Most of the tools produce or operate on newline-terminated records containing tab-delimited fields, often called TSV ("<strong>t</strong>ab-<strong>s</strong>eparated <strong>v</strong>alues"). Unless otherwise specified, tools in DTK take input on STDIN and produce output on STDOUT.
 
 ## ``filter``
 
@@ -366,7 +394,7 @@ $ perl -e 'print int(rand()**2*10), "\n" for 1..100000' | dtk uc desc 5
 7400    4
 ```
 
-# Histogram modules
+## Histogram modules
 
 *Note:* You can read more about histograms on [Wikipedia](http://en.wikipedia.org/wiki/Histogram).
 
@@ -393,7 +421,7 @@ For example:
 * first column is 20 formatted buckets, second column is string: ``v0bn=20 v0f=%.04f v1t=s``
 
 
-## ``hist1``
+### ``hist1``
 
 This module produces single-axis histograms. The output shows the minimum and maximum value that went into each bucket (min..max), the number of values that went into the bucket, and the bar of the histogram. The bar is drawn with ``=`` and capped with ``-`` when the last character of the bar would have been at least half-filled.
 
@@ -471,7 +499,7 @@ $ zcat access_log.[123456789].gz \
 
 Above, you can see the minimum and maximum values which landed in each bucket (like ``454..463`` or ``1002..1002``), the number of values which fell into that bucket (like ``71`` or ``4``), and a bar showing the relative magnitude of the number of values in that bucket as compared to the others.  Buckets which had no values show no minimum or maximum value (merely <code>&nbsp;&nbsp;..&nbsp;&nbsp;</code>).
 
-## ``hist2``
+### ``hist2``
 
 This module renders two-axis histograms. 2d buckets are formed by pairing each row bucket with each column bucket. All buckets are scaled relative to the size of the single largest bucket. Each bucket is drawn both with a color (black &rarr; white in 256-color mode, black &rarr; rainbow &rarr; white in 16-color mode) and a number (``00`` &rarr; ``99``) indicating the relative height of that bar.
 
@@ -494,7 +522,7 @@ $ zcat access_log.gz \
 
 ![hist2 example 2](https://raw.github.com/synacorinc/dtk/master/doc-images/example_hist2_002.png)
 
-## ``hist2_bycol``
+### ``hist2_bycol``
 
 This module is identical to ``hist2`` except that buckets are scaled relative to the highest bucket in their respective column rather than to every bucket in the histogram.
 
@@ -513,7 +541,7 @@ Here is the second example from ``hist2`` but again using ``hist2_bycol`` instea
 
 ![hist2_bycol example 2](https://raw.github.com/synacorinc/dtk/master/doc-images/example_hist2bycol_002.png)
 
-## ``delta1``
+### ``delta1``
 
 This module is like ``hist1`` except that it takes a second column indicating the weight of the entry (including negative or non-integer weights). The histogram produced will have a zero line down the middle and will show, for each bucket, the relative total positive or negative value.
 
