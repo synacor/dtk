@@ -286,9 +286,16 @@ $ perl -e 'for ($x=-5;$x<5;$x+=.1) {
 This can be especially useful for things like watching the relationship between two values in the logs in realtime; we use this for things like graphing logs that contain, for example, retuqest time vs bytes returned.  Here's an example that will animate drawing a spiral in your terminal:
 
 ```
-$ perl -e 'use Time::HiRes qw(sleep); $|=1; for (my$t=0;$t<10;$t+=.01) { print join("\t",cos($t)*$t,sin($t)*$t)."\n"; sleep .01; }' \
+$ perl -e 'use Time::HiRes qw(sleep);
+           $| = 1;
+           for ($t=0; $t<10; $t+=.01) {
+             print join("\t", $t*cos($t), $t*sin($t)) . "\n";
+             sleep .01;
+           }' \
   | dtk plot view=-10..10,-10..10 flush_size=1
 ```
+
+(The ``$| = 1`` line turns on autoflush so the script prints every line individually; ``flush_size=1`` turns off input buffering so each point is rendered, which is only sane for reading slow streams.)
 
 ## ``sort``
 
