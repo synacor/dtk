@@ -40,6 +40,12 @@ Some modules (like ``hist2`` and ``plot``) work better when more colors are avai
 
 Most of the tools produce or operate on newline-terminated records containing tab-delimited fields, often called TSV ("<strong>t</strong>ab-<strong>s</strong>eparated <strong>v</strong>alues"). Unless otherwise specified, tools in DTK take input on STDIN and produce output on STDOUT.
 
+## ``help``
+
+Merely invoking ``dtk help`` produces a list of all available modules.
+
+To get full documentation on a specific module, use ``dtk help <module>`` (like ``dtk help uc``) which just invokes ``dtk <module> --help`` for you.
+
 ## ``filter``
 
 The ``filter`` module is similar to ``perl -ne`` - it runs its first argument as Perl code wrapped in some convenience logic.  The given code is run for each record after filling ``@v`` with each field; the final value of ``@v`` after the code is run is used as the output record. Use ``next`` to drop a record or ``last`` to skip all remaining records.
