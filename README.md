@@ -171,7 +171,7 @@ $ cat access_log | dtk parse apache_access datetime:epoch,bytes:numeric,useragen
 
 ### Parse format details
 
-Each parse format is merely an executable (``chmod +x``) Perl script which returns a datastructure representing instructions on what fields are available, how to build a regular expression which extracts those fields, and any filters that can be applied to the values in those fields before returning them.  These instructions are represented as an array reference containing either a string (to be skipped as a literal delimiter at that position in each record) or an array reference containing the field's name, regex, and optional filters.  When loaded, ``parse`` will determine from this data the minimum regular expression  required to extract the requested fields.
+Each parse format is merely an executable (``chmod +x``) Perl script which returns a data structure representing instructions on what fields are available, how to build a regular expression which extracts those fields, and any filters that can be applied to the values in those fields before returning them.  These instructions are represented as an array reference containing either a string (to be skipped as a literal delimiter at that position in each record) or an array reference containing the field's name, regex, and optional filters.  When loaded, ``parse`` will determine from this data the minimum regular expression  required to extract the requested fields.
 
 Suppose your application creates logs like this:
 
@@ -283,7 +283,7 @@ $ perl -e 'for ($x=-5;$x<5;$x+=.1) {
 
 ![plot example 1](https://raw.github.com/synacorinc/dtk/master/doc-images/example_plot_001.png)
 
-This can be especially useful for things like watching the relationship between two values in the logs in realtime; we use this for things like graphing logs that contain, for example, retuqest time vs bytes returned.  Here's an example that will animate drawing a spiral in your terminal:
+This can be especially useful for things like watching the relationship between two values in the logs in realtime; we use this for things like graphing logs that contain, for example, request time vs bytes returned.  Here's an example that will animate drawing a spiral in your terminal:
 
 ```
 $ perl -e 'use Time::HiRes qw(sleep);
@@ -309,7 +309,7 @@ Flags set modes which apply to subsequent rules until another mode overrides the
 
 These flags apply to all subsequent rules until they are overridden by a different flag of the same type.  (The default is to sort numeric/ascending as if ``-an`` had been specified.)  For example, to sort by the fist column lexically ascending and then by the second column lexically descending, use ``dtk sort -s 0 -d 1``.  To sort by the first column numerically ascending and then by the second column lexically descending, use ``dtk sort 0 -sd 1``.
 
-DTK ``sort`` uses the rules to precalculate keys for each row; this design choice makes it very fast at the cost of memory.  Each rule produces a new key for each row; once all sort keys are calculated, the entire datastructure is sorted based on the ordering and comparison rules.
+DTK ``sort`` uses the rules to precalculate keys for each row; this design choice makes it very fast at the cost of memory.  Each rule produces a new key for each row; once all sort keys are calculated, the entire data structure is sorted based on the ordering and comparison rules.
 
 Valid macros are:
 
