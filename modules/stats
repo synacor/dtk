@@ -41,11 +41,14 @@ while (<STDIN>) {
 
 die "no data" unless $n;
 
+my $sum = $sx1;
+
 my $ex1 = $sx1 / $n;
 my $ex2 = $sx2 / $n;
 my $ex3 = $sx3 / $n;
 
 my $mean = $ex1;
+
 my $variance = $ex2 - $ex1**2;
 my ($stddev, $skew) = (0, 0);
 if ($variance) {
@@ -57,8 +60,8 @@ print <<EOF;
 count:    $n
 min:      $min
 max:      $max
-sum:      $sx1
-mean:     $ex1
+sum:      $sum
+mean:     $mean
 variance: $variance
 stddev:   $stddev
 skew:     $skew
