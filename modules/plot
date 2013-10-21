@@ -100,7 +100,7 @@ if (-t STDOUT) {
 sub parse_pt {
   chomp(my $v = shift);
   my @pt = split(/\t/, $v);
-  die unless @pt >= 2 && @pt <= 3 && $pt[0] =~ $num_re && $pt[1] =~ $num_re && (@pt < 3 || $pt[2] =~ /^[1-7]$/);
+  die "invalid point; each line must be two (x y) or three (x y color) numbers" unless @pt >= 2 && @pt <= 3 && $pt[0] =~ $num_re && $pt[1] =~ $num_re && (@pt < 3 || $pt[2] =~ /^[1-7]$/);
   return @pt;
 }
 
