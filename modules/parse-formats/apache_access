@@ -3,7 +3,17 @@ use strict;
 
 use Date::Parse;
 
-my @ua=([ie10=>qr/\bMSIE 10\b/],[ie9=>qr/\bMSIE 9\b/],[ie8=>qr/\bMSIE 8\b/],[ie7=>qr/\bMSIE 7\b/],[ie6=>qr/\bMSIE 6\b/],[chrome=>qr/\bChrome\//],[firefox=>qr/\bFirefox\//],[safari=>qr/\bSafari\//]);
+my @ua=(
+  [ie11    => qr/\bTrident\/.*\brv\:11\./],
+  [ie10    => qr/\bMSIE 10\b/],
+  [ie9     => qr/\bMSIE 9\b/],
+  [ie8     => qr/\bMSIE 8\b/],
+  [ie7     => qr/\bMSIE 7\b/],
+  [ie6     => qr/\bMSIE 6\b/],
+  [chrome  => qr/\bChrome\//],
+  [firefox => qr/\bFirefox\//],
+  [safari  => qr/\bSafari\//],
+);
 sub ua_class {
   my $ua = shift;
   for my $class (@ua) {
