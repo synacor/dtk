@@ -381,7 +381,7 @@ my %mode = (
         my $v = $sum / $modedata->{sumabsmax};
         my $bw = abs($v) * $bar_space;
         my $bwi = int $bw;
-        my $fillercolor = $conf{v}[0]{ft} ne 'strftime' && defined $b->{l} && defined $b->{h} && $b->{l}<=0 && 0<=$b->{h} ? "\e[1m" : "\e[1;30m";
+        my $fillercolor = $conf{v}[0]{t} eq 'n' && $conf{v}[0]{ft} ne 'strftime' && defined $b->{l} && defined $b->{h} && $b->{l}<=0 && 0<=$b->{h} ? "\e[1m" : "\e[1;30m";
         if ($v < 0) {
           my $bar = "";
           $bar .= "-" if $bw - $bwi > .5;
