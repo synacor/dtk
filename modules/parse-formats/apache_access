@@ -40,7 +40,7 @@ return [
   '] "',
   [method    => qr/\w+/,      ],
   ' ',
-  [path      => qr/[^\"\s]+/, ],
+  [path      => qr/\S+/,      ],
   ' ',
   [protocol  => qr/[^\"]+/,   ],
   '" ',
