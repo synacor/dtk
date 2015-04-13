@@ -364,10 +364,10 @@ my %mode = (
       my %a0meta = %{$type{$conf{v}[0]{t}}{metadata}($t, 0)};
       foreach my $b0 (@{$a0meta{buckets}}) {
         my $sum = $type{$conf{v}[0]{t}}{descend_bybucket}($t, 0, $b0->{ix}, \($modedata->{sums}));
-        $$sum = vformat($conf{v}[1], $$sum||0);
+        my $sumf = vformat($conf{v}[1], $$sum||0);
         my $abs = abs($$sum);
         $modedata->{sumabsmax} = $abs if !defined $modedata->{sumabsmax} || $abs > $modedata->{sumabsmax};
-        $modedata->{sumlenmax} = length $$sum if !defined $modedata->{sumlenmax} || length $$sum > $modedata->{sumlenmax};
+        $modedata->{sumlenmax} = length $sumf if !defined $modedata->{sumlenmax} || length $sumf > $modedata->{sumlenmax};
       }
     },
     draw => sub {
@@ -377,7 +377,7 @@ my %mode = (
       my $bar_space = floor(($term{w} - $meta{lw} - 1 - $modedata->{sumlenmax} - 2 - 1)/2); #label, space, value, space, divider
       foreach my $b (@{$meta{buckets}}) {
         my $sum = ${$type{$conf{v}[0]{t}}{descend_bybucket}($t, 0, $b->{ix}, \($modedata->{sums}))} || 0;
-        printf "%*s %*s  ", $meta{lw}, $b->{lb}, $modedata->{sumlenmax}, $sum;
+        printf "%*s %*s  ", $meta{lw}, $b->{lb}, $modedata->{sumlenmax}, vformat($conf{v}[1], $sum);
         my $v = $sum / $modedata->{sumabsmax};
         my $bw = abs($v) * $bar_space;
         my $bwi = int $bw;
