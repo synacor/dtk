@@ -4,6 +4,7 @@ use strict;
 use Date::Parse;
 
 my @ua=(
+  [edge    => qr/\bEdge\//],
   [ie11    => qr/\bTrident\/.*\brv\:11\./],
   [ie10    => qr/\bMSIE 10\b/],
   [ie9     => qr/\bMSIE 9\b/],
