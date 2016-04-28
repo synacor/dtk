@@ -1,25 +1,38 @@
 #!/usr/bin/perl -w
 use strict;
 
-if (!@ARGV || @ARGV > 2 || $ARGV[0] =~ /^(?:\-\?|\-h|\-\-help)$/) {
-  if (@ARGV > 1) {
-    my @format = format_load($ARGV[1]);
-    print STDERR "Fields (and filters) for format '$ARGV[1]' are:\n";
-    print STDERR map {"  $_->[0]".($_->[2] ? " (".join(", ",keys %{$_->[2]}).")" : "")."\n"} grep {ref eq 'ARRAY'} @format;
-  } else {
-    print STDERR <<'EOF';
-usage: dtk parse <format> [<field>[:<filter>][,...]]
+use Getopt::Long;
+
+my %opt;
+do {
+  $opt{help} = 'usage_error';
+  print "\n";
+} unless GetOptions(\%opt, 'help|h|?', 'f');
+
+if ($opt{help} && $opt{help} ne 'usage_error' && @ARGV) {
+  my @format = format_load($ARGV[0]);
+  print STDERR "Fields (and filters) for format '$ARGV[0]' are:\n";
+  print STDERR map {"  $_->[0]".($_->[2] ? " (".join(", ",keys %{$_->[2]}).")" : "")."\n"} grep {ref eq 'ARRAY'} @format;
+  exit;
+} elsif ($opt{help} || !@ARGV || @ARGV>2) {
+  print STDERR <<'EOF';
+usage: dtk parse [<options>] <format> [<field>[:<filter>][,...]]
 
 This tool can parse specific file formats and produce the fields of each record in dtk-friendly tab-delimited output.  For example, to get the status, datetime (as an epoch time), and ip of each entry of an access log (in that order), you could do:
 
 zcat access_log.gz | dtk parse apache_access status,datetime:epoch,ip
 
+Available options:
+  -f      Enable autoflush, causing the output to be line-buffered.
+  --help  Display this help.
+
 For details on a specific format, use 'dtk parse --help <format>'.  Known formats are:
 EOF
-    print STDERR map {"  $_\n"} format_list();
-  }
+  print STDERR map {"  $_\n"} format_list();
   exit;
 }
+
+$|=1 if $opt{f};
 
 my @format = format_load($ARGV[0]);
 
