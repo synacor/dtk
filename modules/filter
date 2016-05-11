@@ -7,8 +7,6 @@ usage: dtk filter <code>
 
 This tool takes rows of tab-delimited data on STDIN.  For each row, <code> is evaluated, which has access to each individual field of the record via @v, which can be modified in-place.  To drop the current record, use 'next'.  To drop all further records, use 'last'.
 
-This tool PREVIOUSLY used the result of the last expression as an indicator for whether to keep the record; this is NO LONGER the case.
-
 Available helper functions:
 parse_uri
   Takes a URI (or part of one, like /path/to/thing?a=1&b=2 or
@@ -42,7 +40,7 @@ die $@ if $@;
 
 sub parse_uri {
   my ($uri) = @_;
-  return () unless $uri =~ /^(?:(\w+)\:\/\/(?:(?:([^\@]+)\@)?([^\/\:]+)(?:\:(\w+))?)?)?(\/[^\?\#]*)(?:\?([^\#]*))?(?:\#(.*))?$/;
+  return () unless $uri =~ /^(?:(\w+)\:\/\/(?:(?:([^\@]+)\@)?([^\/\:]+)(?:\:(\w+))?)?)?(?:(\/[^\?\#]*))?(?:\?([^\#]*))?(?:\#(.*))?$/;
   return map { defined() ? $_ : "" } (
     schema => $1,
     auth => $2,
