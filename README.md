@@ -275,7 +275,7 @@ Keeping timestamps in epoch time has significant advantages when used with the h
 
 ## ``plot``
 
-This tool will draw simple 2d scatterplots. Its input should consist of two-column data containing x and y coordinates; optionally, a third column can be provided which indicates the color (1-7) to use for the point. If the viewport bounds are not specified, all data will be read before any output is produced so the viewport can be automatically adjusted to fit the whole dataset. If all viewport bounds are given, the scatterplot will be drawn as data is read, allowing, for example, an animated chart from a ``tail -f`` of an access log. Extents can either be given together as ``view=<xl>..<xh>,<yl>..<yh>`` or individually as ``xl=<position>, yh=<position>``, etc.
+This tool will draw simple 2d scatterplots. Its input should consist of two-column data containing x and y coordinates; optionally, a third column can be provided which indicates the color (1-7) to use for the point. If the viewport bounds are not specified, all data will be read before any output is produced so the viewport can be automatically adjusted to fit the whole dataset. If all viewport bounds are given, the scatterplot will be drawn as data is read, allowing, for example, an animated chart from a ``tail -f`` of an access log. Extents can either be given together as ``view=<xl>..<xh>,<yl>..<yh>`` or individually as ``xl=<position>``, ``yh=<position>``, etc.
 
 Here is a plot of ``sin(x)`` and ``cos(x)``:
 
