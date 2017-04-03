@@ -26,7 +26,7 @@ $ cat <(zcat | dtk parse | dtk filter) <(zcat | dtk parse | dtk filter) | dtk de
 
 Some DTK pipelines work like [map-reduce](http://en.wikipedia.org/wiki/MapReduce) jobs, and, in fact, the DTK suite is also quite effective when run in true [big data](http://en.wikipedia.org/wiki/Big_data) map-reduce environments such as [Hadoop Streaming](http://hadoop.apache.org/docs/stable/streaming.html).
 
-DTK prioritizes usefulness and efficiency over shiny interfaces and PowerPoint presentations.  These aren't your boss' tools (unless he also likes this sort of thing, of course).
+DTK prioritizes usefulness and efficiency over shiny interfaces and PowerPoint presentations.  These aren't your boss' tools (unless they also like this sort of thing, of course).
 
 # ``dtk``
 
