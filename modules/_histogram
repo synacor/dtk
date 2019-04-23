@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use strict;
 
-use POSIX qw(floor strftime);
+use POSIX qw(floor ceil fmod strftime);
 
 # pseudoconstants
 my %term = (
@@ -21,6 +21,8 @@ foreach my $arg (@ARGV) {
     $conf{v}[$1]{$2} = $3;
   } elsif ($arg =~ /^(?:\-\?|\-h|\-\-help)$/) {
     $conf{help} = 1;
+  } elsif ($arg eq '--show-params') {
+    $conf{show_params} = 1;
   } else {
     die "invalid argument: $arg\n";
   }
@@ -43,6 +45,10 @@ my %type; %type = (
       die "must provide a format including '%' for f on conf{v}[$ti]" unless $conf->{f} =~ /\%/;
       $conf->{bo} = "value" unless defined $conf->{bo};
       die "invalid bucket order for bo on conf{v}[$ti]" unless exists $type{n}{bucketorder}{$conf->{bo}};
+      $conf->{rl} = "minmax" unless defined $conf->{rl};
+      die "must provide either 'minmax' or 'edges' for rl on conf{v}[$ti]" unless $conf->{rl} =~ /^(?:minmax|edges)$/;
+      $conf->{sf} = "none" unless defined $conf->{sf};
+      die "must provide either 'none' or 'log' for sf on conf{v}[$ti]" unless $conf->{sf} =~ /^(?:none|log)$/;
     },
     bucketorder => {
       value => sub { $_[0] }, # numeric columns are naturally value-sorted
@@ -60,25 +66,64 @@ my %type; %type = (
     input_each => sub {
       my ($t, $ti, $v) = @_;
       die "invalid value (not a number) at stdin line $. value $ti" unless $v =~ /\-?\d+(?:\.\d+)?(?:[eE]\-?\d+)?/;
+      if ($conf{v}[$ti]{sf} eq 'log') {
+        die "non-positive number invalid for log-scale at stdin line $. value $ti" unless $v > 0;
+        $v = log($v);
+      }
       $t->[$ti]{l} = $v if !defined $t->[$ti]{l} || $v < $t->[$ti]{l};
       $t->[$ti]{h} = $v if !defined $t->[$ti]{h} || $v > $t->[$ti]{h};
       return $v;
     },
+    input_post => sub {
+      my ($t, $ti) = @_;
+
+      my ($bn, $bs, $bd, $ba) = @{$conf{v}[$ti]}{qw(bn bs bd ba)};
+      my ($l, $h) = @{$t->[$ti]}{qw(l h)};
+
+      $ba = $l unless defined $ba;
+
+      if ($bd || $l == $h) {
+        $bn = 1;
+        $bs = 1;
+      }
+
+      if (!$bs) {
+        if ($l < $ba && $ba < $h) {
+          my $r = $h-$l;
+          my $l_r = abs($l-$ba);
+          my $h_r = abs($h-$ba);
+          my $l_bn = floor($bn*$l_r/$r);
+          my $h_bn = floor($bn*$h_r/$r);
+          my $l_bs = $l_bn ? $l_r/$l_bn : 0;
+          my $h_bs = $h_bn ? $h_r/$h_bn : 0;
+          $bs = !$l_bs ? $h_bs : !$h_bs ? $l_bs : $l_bs < $h_bs ? $l_bs : $h_bs;
+        } else {
+          my ($near, $far) = abs($ba-$l) < abs($ba-$h) ? ($l,$h) : ($h, $l);
+          my $min_bs = ($h-$l)/$bn;
+          my $adj = fmod($ba-$near, $min_bs);
+          my $far_n = abs(($far+$adj)-$ba)/$min_bs;
+          $bs = abs($far-$ba)/$far_n;
+        }
+      }
+
+      my $base = floor(($l-$ba)/($bs||1));
+      $ba += $base*$bs;
+
+      if (!$bn) {
+        $bn = ceil(($h - $ba) / $bs) || 1;
+      }
+
+      if (!$bn || !$bs) {
+        die "internal error: failed to handle given bucketing configuration for v$ti";
+      }
+
+      @{$conf{v}[$ti]}{qw(bn bs bd ba)} = ($bn, $bs, $bd, $ba);
+      @{$t->[$ti]}{qw(l h)} = ($l, $h);
+    },
     bucket => sub {
       my ($t, $ti, $v) = @_;
-      my $bi;
-      if ($conf{v}[$ti]{bn}) {
-        $bi = floor(
-            ($v           - $t->[$ti]{l})
-          / (($t->[$ti]{h} - $t->[$ti]{l}) || 1)
-          * ($conf{v}[$ti]{bn})
-        );
-        $bi = $conf{v}[$ti]{bn}-1 if $bi > $conf{v}[$ti]{bn}-1;
-      } elsif ($conf{v}[$ti]{bs}) {
-        $bi = floor(($v-$t->[$ti]{l}) / $conf{v}[$ti]{bs});
-      } else {
-        return 0;
-      }
+      my $bi = floor(($v - $conf{v}[$ti]{ba}) / $conf{v}[$ti]{bs});
+      $bi = $conf{v}[$ti]{bn}-1 if $bi > $conf{v}[$ti]{bn}-1;
       return $bi;
     },
     bucket_each => sub {
@@ -92,11 +137,19 @@ my %type; %type = (
       my ($t, $ti, $bi) = @_;
       $t->[$ti]{b}[$bi]{c} ||= 0;
       $t->[$ti]{m} = $t->[$ti]{b}[$bi]{c} if !defined $t->[$ti]{m} || $t->[$ti]{b}[$bi]{c} > $t->[$ti]{m};
-      if ($t->[$ti]{b}[$bi]{c}) {
-        $t->[$ti]{b}[$bi]{l} = vformat($conf{v}[$ti], $t->[$ti]{b}[$bi]{l});
-        $t->[$ti]{b}[$bi]{h} = vformat($conf{v}[$ti], $t->[$ti]{b}[$bi]{h});
+      if ($conf{v}[$ti]{rl} eq 'minmax') {
+        if ($t->[$ti]{b}[$bi]{c}) {
+          $t->[$ti]{b}[$bi]{l} = vformat($conf{v}[$ti], $t->[$ti]{b}[$bi]{l});
+          $t->[$ti]{b}[$bi]{h} = vformat($conf{v}[$ti], $t->[$ti]{b}[$bi]{h});
+        } else {
+          $t->[$ti]{b}[$bi]{l} = "";
+          $t->[$ti]{b}[$bi]{h} = "";
+        }
+      } elsif ($conf{v}[$ti]{rl} eq 'edges') {
+        $t->[$ti]{b}[$bi]{l} = vformat($conf{v}[$ti], ($bi+0) * $conf{v}[$ti]{bs} + $conf{v}[$ti]{ba});
+        $t->[$ti]{b}[$bi]{h} = vformat($conf{v}[$ti], ($bi+1) * $conf{v}[$ti]{bs} + $conf{v}[$ti]{ba});
       } else {
-        ($t->[$ti]{b}[$bi]{l}, $t->[$ti]{b}[$bi]{h}) = ("","");
+        die "unknown setting v${ti}rl=$conf{v}[$ti]{rl}";
       }
       if (!defined $conf{v}[$ti]{cl} || $t->[$ti]{b}[$bi]{c} >= $conf{v}[$ti]{cl}) {
         $t->[$ti]{nwl} = length $t->[$ti]{b}[$bi]{l} if !defined $t->[$ti]{nwl} || length $t->[$ti]{b}[$bi]{l} > $t->[$ti]{nwl};
@@ -127,7 +180,7 @@ my %type; %type = (
     init => sub {
       my ($ti) = @_;
       my $conf = $conf{v}[$ti];
-      die "cannot provide any of bn (bucket num), bs (bucket size), or bd (bucket disable) for type=s conf{v}[$ti]" if $conf->{bn} || $conf->{bs} || $conf->{bd};
+      die "cannot provide v${ti}$_ for column with v${ti}t=s" for grep {/^(?:bn|bs|bd|ba|f|ft|rl|sf)$/} keys %$conf;
       $conf->{bo} = "value" unless defined $conf->{bo};
       die "invalid bucket order for bo on conf{v}[$ti]" unless exists $type{s}{bucketorder}{$conf->{bo}};
     },
@@ -147,6 +200,9 @@ my %type; %type = (
     input_each => sub {
       my ($t, $ti, $v) = @_;
       return $v;
+    },
+    input_post => sub {
+      my ($t, $ti) = @_;
     },
     bucket_each => sub {
       my ($t, $ti, $v) = @_;
@@ -273,7 +329,7 @@ my %mode = (
     },
   },
   hist2_bycol => {
-    desc => "Draws several adjacent histograms from the first input column as grouped by data in the second input column.  Each column of output is a histogram of data from the first input column from some group based on the second input column.",
+    desc => "Draws several adjacent histograms from the first input column as grouped by data\nin the second input column.  Each column of output is a histogram of data from\nthe first input column from some group based on the second input column.",
     arity => 2,
     init => sub {
       for my $ti (0,1) {
@@ -335,7 +391,7 @@ my %mode = (
     },
   },
   delta1 => {
-    desc => "Using two input columns, draws a single-axis histogram of the data in the first input column using positive or negative weights from the second input column.  For example, you could display the difference between a control group and a test group by providing the control data with each weight set to -1 and the test data with each weight set to 1.",
+    desc => "Using two input columns, draws a single-axis histogram of the data in the first\ninput column using positive or negative weights from the second input column.\nFor example, you could display the difference between a control group and a test\ngroup by providing the control data with each weight set to -1 and the test data\nwith each weight set to 1.",
     arity => 2,
     init => sub {
       die "conf{v}[1]{t} must be 'n'" unless $conf{v}[1]{t} eq 'n';
@@ -381,7 +437,7 @@ my %mode = (
         my $v = $sum / $modedata->{sumabsmax};
         my $bw = abs($v) * $bar_space;
         my $bwi = int $bw;
-        my $fillercolor = $conf{v}[0]{t} eq 'n' && $conf{v}[0]{ft} ne 'strftime' && defined $b->{l} && defined $b->{h} && $b->{l}<=0 && 0<=$b->{h} ? "\e[1m" : "\e[1;30m";
+        my $fillercolor = $conf{v}[0]{t} eq 'n' && $conf{v}[0]{ft} ne 'strftime' && defined $b->{l} && defined $b->{h} && $b->{l}<=0 && 0<$b->{h} ? "\e[1m" : "\e[1;30m";
         if ($v < 0) {
           my $bar = "";
           $bar .= "-" if $bw - $bwi > .5;
@@ -418,24 +474,53 @@ usage: dtk $conf{mode} [<options>]
 
 $mode->{desc}
 
-This tool is part of the dtk histogram suite, all of which take rows of tab-delimited data on STDIN and use the following conventions:
+This tool is part of the dtk histogram suite, all of which take rows of
+tab-delimited data on STDIN and use the following conventions:
 
-Options on a specific input column are v<n><p>=<v>, where <n> is the input column (from zero), <p> is the property to set, and <v> is the value of the property.
-v#t  - type; 'n' for numeric, 's' for string
-v#bn - bucket number; the integer number of buckets to use
-v#bs - bucket size; the width of each bucket
-v#bd - bucket disable; set to 1 to disable bucketing; usually set automatically when needed
+Options on a specific input column use the format v<n><p>=<v>, where <n> is the
+input column (from zero), <p> is the property to set, and <v> is the value of
+the property.
+
+General options:
+--help         Show this help.
+--show-params  Before displayint normal output, print on STDERR the final
+               per-column parameters used.
+
+Bucketing options:
+v#t  - type; 'n' for numeric, 's' for string (default: 'n')
+
+Column options:
 v#bo - bucket order; 'value' or 'count' (default: 'value')
-v#cl - count low; the minimum count a bucket from this column must have to be included (default: no limit)
-v#f  - format; takes sprintf or strftime formats (as specified by v#ft)
-v#ft - format type; either 'sprintf' or 'strftime'; defaults to 'sprintf' with v#f=%.02f; v#ft=strftime with no v#f defaults to v#f="%F %T"
+v#cl - count low; the minimum count a bucket from this column must have to be
+       included (default: no limit)
 
-Only one of bn/bs/bd can be set for each input column and can only be set for v#t=n columns.
+Numeric column bucketing options (when v#t=n):
+v#bn - bucket number; the integer number of buckets to use
+v#bs - bucket size; the width of each bucket (if v#sf is not 'none', this is
+       taken in post-scaling units)
+v#bd - bucket disable; set to 1 to disable bucketing; usually set automatically
+       when needed (such as delta1's weight column)
+v#ba - bucket align; buckets will be chosen so that some bucket edge falls on
+       this value (default: the lowest value in this column)
+Only one of bn/bs/bd can be set for each input column; if none is set, v#bn=10
+is used.
+
+Numeric column formatting options (when v#t=n):
+v#f  - format; takes sprintf or strftime formats (as specified by v#ft; see v#ft
+       for defaults)
+v#ft - format type; either 'sprintf' or 'strftime' (default: 'sprintf' with
+       v#f='%.02f'; v#ft=strftime with no v#f defaults to v#f='%F %T')
+v#rl - range labels; 'minmax' (smallest/largest value in bucket) or 'edges'
+       (actual edges of bucket) (default: 'minmax')
+v#sf - scaling function; 'none' or 'log' (base e) (default: 'none')
 
 For example:
-  ten buckets from the first input column: v0bn=10
-  buckets of width .2 for the second input column: v1bs=.2
-  first column is 20 formatted buckets, second column is string: v0bn=20 v0f=%.04f v1t=s
+  ten buckets from the first input column:
+    v0bn=10
+  buckets of width .2 for the second input column:
+    v1bs=.2
+  first column is 20 formatted buckets, second column is string:
+    v0bn=20 v0f=%.04f v1t=s
 EOF
   exit;
 }
@@ -464,6 +549,10 @@ while (<STDIN>) {
 
 die "no data!" unless @v;
 
+foreach my $ti (0..$#t) {
+  $type{$conf{v}[$ti]{t}}{input_post}(\@t, $ti);
+}
+
 foreach my $tuple (@v) {
   for my $ti (0..$#$tuple) {
     $type{$conf{v}[$ti]{t}}{bucket_each}(\@t, $ti, $tuple->[$ti]);
@@ -487,6 +576,17 @@ foreach my $ti (0..$#t) {
 
 $mode->{finalize}(\@t, \%modedata);
 
+if ($conf{show_params}) {
+  for my $ti (0..$#{$conf{v}}) {
+    print STDERR "v$ti:\n";
+    for my $k (sort keys %{$conf{v}[$ti]}) {
+      next unless defined $conf{v}[$ti]{$k};
+      print STDERR "  $k:\t$conf{v}[$ti]{$k}\n";
+    }
+  }
+  print STDERR "\n";
+}
+
 $mode->{draw}(\@t, \%modedata);
 
 
@@ -503,5 +603,8 @@ sub vcolor {
 
 sub vformat {
   my ($tupleconf, $v) = @_;
+  if ($tupleconf->{sf} eq 'log') {
+    $v = exp($v);
+  }
   return $tupleconf->{ft} eq 'sprintf' ? sprintf($tupleconf->{f}, $v) : strftime($tupleconf->{f}, localtime $v);
 }
