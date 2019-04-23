@@ -532,6 +532,7 @@ for my $ti (0..$mode->{arity}-1) {
 $mode->{init}();
 
 for my $ti (0..$mode->{arity}-1) {
+  die "unknown type given to v${ti}t" unless exists $type{$conf{v}[$ti]{t}};
   $type{$conf{v}[$ti]{t}}{init}($ti);
 }
 
