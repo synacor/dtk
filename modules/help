@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use strict;
 
-if (@ARGV) {
+if (@ARGV && $ARGV[0] ne '--help') {
   my $mod = shift;
   my $modbin = module_bin($mod);
   $ENV{DTK_MODE} = $mod;
