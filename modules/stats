@@ -31,6 +31,7 @@ my $sx2 = 0;
 my $sx3 = 0;
 while (<STDIN>) {
   chomp;
+  die "dtk stats expects only one column, but got more than one at stdin line $.; line was: $_\n" if /\t/;
   $n++;
   $min = $_ if $_ < $min;
   $max = $_ if $_ > $max;
