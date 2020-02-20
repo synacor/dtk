@@ -55,7 +55,7 @@ sub parse_uri {
 sub decode_uri {
   my ($v) = @_;
   $v =~ s/\+/ /g;
-  $v =~ s/%(..)/pack("c",hex($1))/ge;
+  $v =~ s/%(..)/pack("C",hex($1))/ge;
   return $v;
 }
 
